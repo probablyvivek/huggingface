@@ -1,0 +1,74 @@
+{
+  "summary": {
+    "total_questions": 3,
+    "successful": 0,
+    "success_rate": 0.0,
+    "average_score": 0.0,
+    "average_time": 3.126666666666667,
+    "average_confidence": 0.6999999999999998,
+    "average_reasoning_quality": 0.0,
+    "performance_by_difficulty": {
+      "hard": {
+        "total": 1,
+        "successful": 0
+      },
+      "medium": {
+        "total": 2,
+        "successful": 0
+      }
+    }
+  },
+  "detailed_results": [
+    {
+      "question_id": "research_001",
+      "question": "What is the last word before the second chorus of the King of Pop's fifth single from his sixth studio album?",
+      "difficulty": "hard",
+      "expected_answer": "stare",
+      "agent_answer": "",
+      "execution_time": 4.23,
+      "tools_used": [
+        "simple_agent"
+      ],
+      "confidence": 0.7,
+      "similar_questions_found": 0,
+      "success_score": 0.0,
+      "success": false,
+      "tool_usage_appropriate": false,
+      "reasoning_quality": 0.0
+    },
+    {
+      "question_id": "research_002",
+      "question": "If I invest $5000 at 3.5% annual compound interest for 8 years, how much will I have, and what country has a similar GDP per capita?",
+      "difficulty": "medium",
+      "expected_answer": "~$6570, similar to countries like Bulgaria or Romania",
+      "agent_answer": "",
+      "execution_time": 2.25,
+      "tools_used": [
+        "simple_agent"
+      ],
+      "confidence": 0.7,
+      "similar_questions_found": 0,
+      "success_score": 0.0,
+      "success": false,
+      "tool_usage_appropriate": false,
+      "reasoning_quality": 0.0
+    },
+    {
+      "question_id": "research_003",
+      "question": "What is the population density of the country where the 2024 Olympics were held, and how does it compare to Singapore?",
+      "difficulty": "medium",
+      "expected_answer": "France: ~118 people/km\u00b2, Singapore: ~8000 people/km\u00b2, Singapore is ~68x denser",
+      "agent_answer": "",
+      "execution_time": 2.9,
+      "tools_used": [
+        "simple_agent"
+      ],
+      "confidence": 0.7,
+      "similar_questions_found": 0,
+      "success_score": 0.0,
+      "success": false,
+      "tool_usage_appropriate": false,
+      "reasoning_quality": 0.0
+    }
+  ]
+}
