@@ -13,10 +13,30 @@ load_dotenv()
 
 @dataclass
 class Configuration:
-    llm_api_key: str
-    llm_endpoint: str = "https://api.groq.com/openai/v1/chat/completions"
-    llm_model: str = "llama-3.3-70b-versatile"
+    # Groq config
+    groq_api_key: str
+    groq_endpoint: str = "https://api.groq.com/openai/v1/chat/completions"
+    groq_model: str = "llama-3.3-70b-versatile"
+    
+    # Ollama config  
+    ollama_endpoint: str = "http://localhost:11434/v1/chat/completions"
+    ollama_model: str = "llama3.2:latest"
+    
+    # Default to groq, but make it switchable
+    active_provider: str = "groq"  # or "ollama"
     servers_config_path: str = "servers_config.json"
+    
+    @property
+    def current_endpoint(self):
+        return self.groq_endpoint if self.active_provider == "groq" else self.ollama_endpoint
+    
+    @property 
+    def current_model(self):
+        return self.groq_model if self.active_provider == "groq" else self.ollama_model
+    
+    @property
+    def current_api_key(self):
+        return self.groq_api_key if self.active_provider == "groq" else "ollama"
 
 class MCPServerManager:
     def __init__(self):
@@ -83,12 +103,12 @@ class LLMClient:
     def chat_completion(self, messages: List[Dict], tools: Optional[List[Dict]] = None):
         """Send a chat completion request to the LLM"""
         headers = {
-            "Authorization": f"Bearer {self.config.llm_api_key}",
+            "Authorization": f"Bearer {self.config.current_api_key}",
             "Content-Type": "application/json"
         }
         
         payload = {
-            "model": self.config.llm_model,
+            "model": self.config.current_model,
             "messages": messages,
             "temperature": 0.7
         }
@@ -99,25 +119,43 @@ class LLMClient:
         
         # Print payload for debugging
         # print("Payload:", json.dumps(payload, indent=2))
-        response = requests.post(self.config.llm_endpoint, json=payload, headers=headers)
+        response = requests.post(
+            self.config.current_endpoint,
+            json=payload,
+            headers=headers
+        )
         try:
             response.raise_for_status()
         except Exception as e:
-            print("❌ LLM API error:", response.status_code, response.text)
+            print(f"❌ {self.config.active_provider.upper()} API error:", response.status_code, response.text)
             raise
         return response.json()
+
+    def switch_provider(self, provider: str):
+        """Switch between groq and ollama"""
+        if provider.lower() in ["groq", "ollama"]:
+            self.config.active_provider = provider.lower()
+            print(f"🔄 Switched to {provider.upper()}")
+        else:
+            print("❌ Invalid provider. Use 'groq' or 'ollama'")
         
 def load_config() -> Configuration:
-    api_key = os.getenv("LLM_API_KEY")
-    if not api_key:
-        raise ValueError("LLM_API_KEY not found in environment variables")
-    return Configuration(llm_api_key=api_key)
+    groq_api_key = os.getenv("GROQ_API_KEY")
+    if not groq_api_key:
+        raise ValueError("GROQ_API_KEY not found in environment variables")
+    
+    # Allow switching provider via env var
+    provider = os.getenv("AI_PROVIDER", "groq").lower()
+    
+    return Configuration(
+        groq_api_key=groq_api_key,
+        active_provider=provider
+    )
 
-# Update your main() function's chat loop to this:
 async def main():
     print("🤖 MCP Chatbot starting up...")
     config = load_config()
-    print(f"✅ Config loaded, using model: {config.llm_model}")
+    print(f"✅ Config loaded, using {config.active_provider.upper()} with model: {config.current_model}")
     
     # Load and start MCP servers
     with open(config.servers_config_path) as f:
@@ -130,7 +168,7 @@ async def main():
     llm_client = LLMClient(config)
     
     print(f"\n🎉 All servers ready! Found {len(server_manager.all_tools)} total tools")
-    print("Chat with your AI assistant (type 'quit' to exit):\n")
+    print("Chat with your AI assistant (type 'quit' to exit, 'switch groq/ollama' to change provider):\n")
     
     # Conversation history
     messages = [{
@@ -143,6 +181,12 @@ async def main():
         user_input = input("You: ").strip()
         if user_input.lower() in ['quit', 'exit']:
             break
+        
+        # Handle provider switching
+        if user_input.lower().startswith('switch '):
+            provider = user_input.lower().replace('switch ', '')
+            llm_client.switch_provider(provider)
+            continue
             
         messages.append({"role": "user", "content": user_input})
         
