@@ -1,2 +1,6 @@
 .DS_Store
 .env
+/venv
+venv
+*.json
+__pycache__/
