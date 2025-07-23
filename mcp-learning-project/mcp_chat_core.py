@@ -208,71 +208,129 @@ def generate_tool_keywords(server_manager) -> List[str]:
     
     return list(keywords)
 
+# Complete replacement for the OllamaClient class in your mcp_chat_core.py
+
 class OllamaClient:
     def __init__(self, config: Configuration):
         self.config = config
 
     def parse_tool_calls(self, content: str) -> List[Dict]:
-        """Parse tool calls from model response - handles multiple calls"""
+        """Enhanced tool call parser that handles various formats"""
         tool_calls = []
         
-        # Only look for tool calls if the response looks like JSON
-        if not (content.strip().startswith('{"tool_call":') or '{"tool_call":' in content):
-            return []
+        # Method 1: Look for JSON format tool calls
+        json_patterns = [
+            r'\{\s*"tool_call"\s*:\s*\{[^}]+\}\s*\}',
+            r'\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{[^}]*\}\s*\}',
+        ]
         
-        # Look for JSON objects with tool_call pattern - more robust regex
-        json_pattern = r'\{\s*"tool_call"\s*:\s*\{[^}]*\}\s*\}'
-        matches = re.findall(json_pattern, content)
-        
-        for match in matches:
-            try:
-                # Clean up the match
-                clean_match = match.replace('$n', '\n').strip()
-                tool_request = json.loads(clean_match)
-                
-                if 'tool_call' in tool_request:
-                    tool_calls.append(tool_request['tool_call'])
+        for pattern in json_patterns:
+            matches = re.findall(pattern, content, re.DOTALL)
+            for match in matches:
+                try:
+                    clean_match = match.replace('$n', '\n').strip()
                     
-            except json.JSONDecodeError as e:
-                print(f"⚠️ Failed to parse tool call JSON: {match} - {e}")
-                continue
-                
+                    # Handle both formats
+                    if '"tool_call":' in clean_match:
+                        tool_request = json.loads(clean_match)
+                        if 'tool_call' in tool_request:
+                            tool_calls.append(tool_request['tool_call'])
+                    else:
+                        # Direct format
+                        tool_calls.append(json.loads(clean_match))
+                        
+                except json.JSONDecodeError:
+                    continue
+        
+        # Method 2: Smart text parsing for any tool mention
+        if not tool_calls:
+            tool_calls = self._parse_tool_from_text(content)
+        
         return tool_calls
 
+    def _parse_tool_from_text(self, content: str) -> List[Dict]:
+        """Parse tool calls from natural text"""
+        content_lower = content.lower()
+        
+        # Common tool patterns and their mappings
+        tool_patterns = {
+            # Kite patterns
+            r'(?:get|show|fetch).*(?:holdings?|portfolio)': {'name': 'kite:get_holdings', 'args': {}},
+            r'(?:get|show|fetch).*(?:profile|account)': {'name': 'kite:get_profile', 'args': {}},
+            r'(?:get|show|fetch).*(?:positions?)': {'name': 'kite:get_positions', 'args': {}},
+            r'(?:get|show|list).*(?:orders?)': {'name': 'kite:get_orders', 'args': {}},
+            r'(?:get|show).*(?:margins?)': {'name': 'kite:get_margins', 'args': {}},
+            
+            # Notes patterns
+            r'(?:list|show|get).*notes?': {'name': 'Notes (AppleScript):list_notes', 'args': {}},
+            r'(?:create|add|new).*note': {'name': 'Notes (AppleScript):add_note', 'args': {}},
+            
+            # Chrome patterns  
+            r'(?:open|go to|visit).*(?:url|website|page)': {'name': 'Chrome (AppleScript):open_url', 'args': {}},
+            r'(?:list|show).*tabs?': {'name': 'Chrome (AppleScript):list_tabs', 'args': {}},
+            r'(?:current|active).*tab': {'name': 'Chrome (AppleScript):get_current_tab', 'args': {}},
+            
+            # MongoDB patterns
+            r'(?:list|show).*(?:databases?|collections?)': {'name': 'MongoDB:list-databases', 'args': {}},
+            r'(?:find|search|query).*(?:mongo|database)': {'name': 'MongoDB:find', 'args': {}},
+            
+            # n8n patterns
+            r'(?:list|show).*(?:workflows?|nodes?)': {'name': 'n8n-mcp:list_nodes', 'args': {}},
+            r'(?:search|find).*(?:workflow|node)': {'name': 'n8n-mcp:search_nodes', 'args': {}},
+            r'(?:create|make).*workflow': {'name': 'n8n-mcp:n8n_create_workflow', 'args': {}},
+            
+            # File system patterns
+            r'(?:list|show).*(?:files?|directory|folder)': {'name': 'Filesystem:list_directory', 'args': {}},
+            r'(?:read|show|cat).*file': {'name': 'Filesystem:read_file', 'args': {}},
+            r'(?:search|find).*files?': {'name': 'Filesystem:search_files', 'args': {}},
+        }
+        
+        for pattern, tool_info in tool_patterns.items():
+            if re.search(pattern, content_lower):
+                return [{'name': tool_info['name'], 'arguments': tool_info['args']}]
+        
+        return []
+
     def chat_completion(self, messages: List[Dict], tools: Optional[List[Dict]] = None, server_manager=None):
-        """Send a chat completion request to Ollama using native API"""
+        """Enhanced chat completion with better tool calling"""
         headers = {"Content-Type": "application/json"}
         
-        # Build prompt more carefully
+        # Build a more effective prompt
         prompt_parts = []
         
-        # Add tools description only if user seems to need them
-        include_tools = False
-        if tools and len(tools) > 0 and server_manager:
-            # Check if the last user message suggests they want to use tools
-            last_user_msg = ""
-            for msg in reversed(messages):
-                if msg["role"] == "user":
-                    last_user_msg = msg["content"].lower()
-                    break
-            
-            # Keywords that suggest tool usage - now dynamic!
-            tool_keywords = generate_tool_keywords(server_manager)
-            
-            include_tools = any(keyword in last_user_msg for keyword in tool_keywords)
+        # Check if this looks like a tool request
+        last_user_msg = ""
+        for msg in reversed(messages):
+            if msg["role"] == "user":
+                last_user_msg = msg["content"].lower()
+                break
         
-        if include_tools:
-            tools_description = "AVAILABLE TOOLS (use only if needed):\n"
-            for tool in tools[:3]:  # Show fewer tools to reduce confusion
+        # Tool usage indicators
+        tool_indicators = [
+            'get', 'show', 'list', 'fetch', 'find', 'search', 'create', 'open', 'run',
+            'holdings', 'profile', 'positions', 'orders', 'notes', 'files', 'tabs',
+            'workflow', 'database', 'tools', 'my', 'current'
+        ]
+        
+        seems_like_tool_request = any(indicator in last_user_msg for indicator in tool_indicators)
+        
+        # Add tool instructions if this looks like a tool request
+        if seems_like_tool_request and tools and len(tools) > 0:
+            prompt_parts.append("TOOL CALLING MODE ACTIVATED")
+            prompt_parts.append("Available tools:")
+            
+            # Show relevant tools based on the request
+            relevant_tools = self._get_relevant_tools(last_user_msg, tools)
+            for tool in relevant_tools[:10]:  # Show top 10 relevant tools
                 func = tool.get("function", {})
                 name = func.get('name', 'unknown')
                 desc = func.get('description', 'No description')
-                tools_description += f"- {name}: {desc[:50]}...\n"
+                prompt_parts.append(f"- {name}: {desc}")
             
-            tools_description += f"\n(and {len(tools)-3} more tools available)\n"
-            tools_description += "\nTo use a tool, respond with: {\"tool_call\": {\"name\": \"tool_name\", \"arguments\": {}}}\n"
-            tools_description += "Otherwise, just chat normally.\n\n"
-            prompt_parts.append(tools_description)
+            prompt_parts.append("\nTo use a tool, respond with ONLY this JSON format:")
+            prompt_parts.append('{"tool_call": {"name": "exact_tool_name", "arguments": {}}}')
+            prompt_parts.append("Replace 'exact_tool_name' with the actual tool name from the list above.")
+            prompt_parts.append("Do NOT add any other text. Just the JSON.\n")
         
         # Add conversation history
         for msg in messages:
@@ -292,9 +350,10 @@ class OllamaClient:
             "prompt": full_prompt,
             "stream": False,
             "options": {
-                "temperature": 0.3,  # Lower temperature for more consistent tool calling
+                "temperature": 0.1 if seems_like_tool_request else 0.3,
                 "top_p": 0.9,
-                "stop": ["\nHuman:", "\nUser:"]
+                "stop": ["\nHuman:", "\nUser:"],
+                "num_predict": 200 if seems_like_tool_request else 1000,
             }
         }
         
@@ -321,13 +380,54 @@ class OllamaClient:
         except requests.exceptions.RequestException as e:
             raise Exception(f"Ollama API error: {e}")
 
+    def _get_relevant_tools(self, query: str, tools: List[Dict]) -> List[Dict]:
+        """Get tools most relevant to the user's query"""
+        query_lower = query.lower()
+        relevant = []
+        
+        # Score tools based on relevance
+        for tool in tools:
+            func = tool.get("function", {})
+            name = func.get('name', '').lower()
+            desc = func.get('description', '').lower()
+            
+            score = 0
+            # Exact name matches
+            if any(word in name for word in query_lower.split()):
+                score += 10
+            # Description matches
+            if any(word in desc for word in query_lower.split() if len(word) > 3):
+                score += 5
+            # Category matches
+            if 'kite' in query_lower and 'kite' in name:
+                score += 15
+            if 'note' in query_lower and 'notes' in name:
+                score += 15
+            if 'file' in query_lower and ('filesystem' in name or 'file' in name):
+                score += 15
+            if 'mongo' in query_lower and 'mongodb' in name:
+                score += 15
+            if 'chrome' in query_lower and 'chrome' in name:
+                score += 15
+            if 'workflow' in query_lower and 'n8n' in name:
+                score += 15
+            
+            if score > 0:
+                relevant.append((tool, score))
+        
+        # Sort by relevance score
+        relevant.sort(key=lambda x: x[1], reverse=True)
+        return [tool for tool, score in relevant]
+
     def change_model(self, model: str):
         """Change the Ollama model"""
         self.config.ollama_model = model
         print(f"🔄 Switched to model: {model}")
 
+
+# Also add this helper function to better handle conversation turns
 async def handle_conversation_turn(ollama_client, server_manager, messages, openai_tools):
-    """Handle a single conversation turn with proper tool calling"""
+    """Enhanced conversation handler with better tool detection"""
     try:
         # Get initial response
         response = ollama_client.chat_completion(messages, openai_tools, server_manager)
@@ -337,35 +437,61 @@ async def handle_conversation_turn(ollama_client, server_manager, messages, open
         if not content:
             return "I'm not sure how to respond to that."
         
+        print(f"🤖 Model response: {content[:100]}...")
+        
         # Check for tool calls
         tool_calls = ollama_client.parse_tool_calls(content)
         
         if tool_calls:
-            print(f"🔧 Found {len(tool_calls)} tool call(s)")
+            print(f"🔧 Detected {len(tool_calls)} tool call(s)")
             
-            # Execute the first tool call (limit to one for stability)
+            # Execute the first tool call
             tool_call = tool_calls[0]
             tool_name = tool_call.get("name")
             arguments = tool_call.get("arguments", {})
             
             if not tool_name:
-                return "I tried to use a tool but couldn't determine which one."
+                return "I detected a tool request but couldn't determine which tool to use."
+            
+            print(f"   📡 Executing {tool_name} with args: {arguments}")
+            
+            try:
+                result = await server_manager.execute_tool(tool_name, arguments)
                 
-            print(f"   📡 Calling {tool_name} with {arguments}")
-            result = await server_manager.execute_tool(tool_name, arguments)
-            
-            # Add tool interaction to conversation
-            messages.append({"role": "assistant", "content": f"I'm calling {tool_name}..."})
-            messages.append({"role": "user", "content": f"Tool {tool_name} returned: {result}"})
-            
-            # Get final response based on tool result
-            final_response = ollama_client.chat_completion(messages, [], server_manager)  # No tools for final response
-            final_content = final_response["choices"][0]["message"].get("content", "")
-            
-            messages.append({"role": "assistant", "content": final_content})
-            return final_content
+                # Add tool interaction to conversation
+                messages.append({"role": "assistant", "content": f"I'm using the {tool_name} tool..."})
+                messages.append({"role": "user", "content": f"Tool {tool_name} returned: {result}"})
+                
+                # Get final response based on tool result
+                final_response = ollama_client.chat_completion(messages, [], server_manager)
+                final_content = final_response["choices"][0]["message"].get("content", "")
+                
+                messages.append({"role": "assistant", "content": final_content})
+                return final_content
+                
+            except Exception as e:
+                error_msg = f"Error executing {tool_name}: {str(e)}"
+                print(f"❌ {error_msg}")
+                return f"I tried to use the {tool_name} tool but encountered an error: {str(e)}"
         else:
-            # Regular conversation without tools
+            # Check if this might have been a tool request that failed to parse
+            last_user_msg = ""
+            for msg in reversed(messages):
+                if msg["role"] == "user":
+                    last_user_msg = msg["content"].lower()
+                    break
+            
+            tool_indicators = ['get', 'show', 'list', 'fetch', 'holdings', 'profile', 'notes', 'tools']
+            if any(indicator in last_user_msg for indicator in tool_indicators):
+                # Suggest available tools
+                available_tools = [tool['function']['name'] for tool in openai_tools[:5]]
+                tools_list = '\n'.join(f"- {tool}" for tool in available_tools)
+                
+                enhanced_response = f"{content}\n\nI noticed you might be looking for tool functionality. Here are some available tools:\n{tools_list}\n\nTry being more specific, like 'get my holdings' or 'show my profile'."
+                messages.append({"role": "assistant", "content": enhanced_response})
+                return enhanced_response
+            
+            # Regular conversation
             messages.append(assistant_message)
             return content
             
